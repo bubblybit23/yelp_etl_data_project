@@ -1,0 +1,38 @@
+version: 2
+
+models:
+  - name: dim_business
+    columns:
+      - name: business_id
+        tests:
+          - unique
+          - not_null
+      - name: avg_rating
+        tests:
+          - accepted_values:
+              values: ['>= 0', '<= 5']
+
+  - name: fact_reviews
+    columns:
+      - name: review_id
+        tests:
+          - unique
+          - not_null
+      - name: stars
+        tests:
+          - accepted_values:
+              values: ['>= 1', '<= 5']
+
+sources:
+  - name: yelp_transform
+    tables:
+      - name: stg_businesses
+        columns:
+          - name: business_id
+            tests:
+              - not_null
+      - name: stg_reviews
+        columns:
+          - name: review_id
+            tests:
+              - not_null

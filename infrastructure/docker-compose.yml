@@ -1,0 +1,207 @@
+version: '3.8'
+
+x-spark-common: &spark-common
+  image: bitnami/spark:3.5.0
+  volumes:
+    - ../data:/data:ro
+    - ../spark/jobs:/opt/bitnami/spark/jobs
+    - ../spark/requirements.txt:/tmp/requirements.txt
+  environment:
+    - SPARK_MODE=master
+    - SPARK_RPC_AUTHENTICATION_ENABLED=no
+    - SPARK_RPC_ENCRYPTION_ENABLED=no
+    - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+    - SPARK_SSL_ENABLED=no
+    # CRITICAL: Connect Spark to Hive Metastore
+    - SPARK_HIVE_METASTORE_URIS=thrift://hive-metastore:9083
+  networks:
+    - yelp-platform-net
+
+services:
+  postgres:
+    image: postgres:13
+    container_name: airflow-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-db:/var/lib/postgresql/data
+    networks:
+      - yelp-platform-net
+
+  airflow-init:
+    image: apache/airflow:2.7.3
+    container_name: airflow-init
+    environment:
+      &airflow-common-env
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__CORE__ENABLE_XCOM_PICKLING: 'true'
+      AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: 'false'
+      AIRFLOW__OPERATORS__SPARK_SUBMIT__SPARK_CONN_ID: spark_default
+      AIRFLOW__OPERATORS__SPARK_SUBMIT__SPARK_HOME: /opt/bitnami/spark
+      AIRFLOW_CONN_SPARK_DEFAULT: spark://spark-master:7077
+    volumes:
+      - ../airflow/dags:/opt/airflow/dags
+      - ../airflow/requirements.txt:/opt/airflow/requirements.txt
+      - ../airflow/plugins:/opt/airflow/plugins
+      - ../data:/data:ro
+      - ../dbt:/opt/airflow/dbt
+      - ../spark/jobs:/opt/airflow/spark_jobs
+    user: "0:0"
+    depends_on:
+      - postgres
+    command: >
+      bash -c "
+        pip install --no-cache-dir -r /opt/airflow/requirements.txt &&
+        airflow db init &&
+        airflow users create --username airflow --password airflow --firstname Air --lastname Flow --role Admin --email admin@example.com
+      "
+    networks:
+      - yelp-platform-net
+
+  airflow-webserver:
+    image: apache/airflow:2.7.3
+    container_name: airflow-webserver
+    environment:
+      <<: *airflow-common-env
+    volumes:
+      - ../airflow/dags:/opt/airflow/dags
+      - ../airflow/requirements.txt:/opt/airflow/requirements.txt
+      - ../airflow/plugins:/opt/airflow/plugins
+      - ../data:/data:ro
+      - ../dbt:/opt/airflow/dbt
+      - ../spark/jobs:/opt/airflow/spark_jobs
+    user: "0:0"
+    ports:
+      - "8080:8080"
+    command: airflow webserver
+    depends_on:
+      - postgres
+      - airflow-init
+    networks:
+      - yelp-platform-net
+
+  airflow-scheduler:
+    image: apache/airflow:2.7.3
+    container_name: airflow-scheduler
+    environment:
+      <<: *airflow-common-env
+    volumes:
+      - ../airflow/dags:/opt/airflow/dags
+      - ../airflow/requirements.txt:/opt/airflow/requirements.txt
+      - ../airflow/plugins:/opt/airflow/plugins
+      - ../data:/data:ro
+      - ../dbt:/opt/airflow/dbt
+      - ../spark/jobs:/opt/airflow/spark_jobs
+    user: "0:0"
+    command: airflow scheduler
+    depends_on:
+      - postgres
+      - airflow-init
+    networks:
+      - yelp-platform-net
+
+  spark-master:
+    <<: *spark-common
+    container_name: spark-master
+    ports:
+      - "9090:8080"
+      - "7077:7077"
+      - "10001:10001"
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_HIVE_METASTORE_URIS=thrift://hive-metastore:9083
+
+  spark-worker:
+    <<: *spark-common
+    container_name: spark-worker
+    depends_on:
+      - spark-master
+      - hive-metastore
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - SPARK_HIVE_METASTORE_URIS=thrift://hive-metastore:9083
+
+  spark-staging:
+    <<: *spark-common
+    container_name: spark-staging
+    depends_on:
+      - spark-master
+      - hive-metastore
+    command: >
+      bash -c "
+      echo 'Waiting for services to be ready...'
+      sleep 30
+      /opt/bitnami/spark/bin/spark-submit \
+        --master spark://spark-master:7077 \
+        --conf spark.sql.warehouse.dir=/tmp/spark-warehouse \
+        --conf hive.metastore.uris=thrift://hive-metastore:9083 \
+        /opt/bitnami/spark/jobs/create_staging_layer.py
+      "
+
+  spark-transformation:
+    <<: *spark-common
+    container_name: spark-transformation
+    depends_on:
+      - spark-staging
+    command: >
+      bash -c "
+      echo 'Waiting for staging to complete...'
+      sleep 35
+      /opt/bitnami/spark/bin/spark-submit \
+        --master spark://spark-master:7077 \
+        --conf spark.sql.warehouse.dir=/tmp/spark-warehouse \
+        --conf hive.metastore.uris=thrift://hive-metastore:9083 \
+        /opt/bitnami/spark/jobs/create_transformation_layer.py
+      "
+
+  hive-metastore:
+    image: apache/hive:3.1.3
+    container_name: hive-metastore
+    environment:
+      DB_DRIVER: derby
+    command: >
+      /bin/bash -c "
+        /opt/hive/bin/schematool -initSchema -dbType derby &&
+        /opt/hive/bin/hive --service metastore
+      "
+    volumes:
+      - hive-metastore-db:/opt/hive/metastore
+    ports:
+      - "9083:9083"
+    networks:
+      - yelp-platform-net
+
+  hive-server:
+    image: apache/hive:3.1.3
+    container_name: hive-server
+    depends_on:
+      - hive-metastore
+    environment:
+      HIVE_METASTORE_URIS: thrift://hive-metastore:9083
+    command: /opt/hive/bin/hiveserver2
+    ports:
+      - "10000:10000"
+      - "10002:10002"
+    networks:
+      - yelp-platform-net
+
+volumes:
+  postgres-db:
+  hive-metastore-db:
+
+networks:
+  yelp-platform-net:
+    driver: bridge

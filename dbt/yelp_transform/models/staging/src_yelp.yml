@@ -1,0 +1,7 @@
+version: 2
+
+sources:
+  - name: yelp_raw
+    tables:
+      - name: businesses
+      - name: reviews

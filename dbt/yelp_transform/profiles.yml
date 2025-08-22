@@ -1,0 +1,10 @@
+yelp_transform:
+  target: dev
+  outputs:
+    dev:
+      type: spark
+      method: thrift
+      host: 172.18.0.1 # Use the container name
+      port: 10001
+      schema: yelp_transform
+      connect_timeout: 60
