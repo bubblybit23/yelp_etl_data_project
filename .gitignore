@@ -2,3 +2,6 @@
 data/
 outputs/
 .env
+dbt/yelp_transform/*.yml
+dbt/yelp_transform/target/
+dbt/*.log
