@@ -4,7 +4,7 @@ yelp_transform:
     dev:
       type: spark
       method: thrift
-      host: localhost # Use the container name
-      port: 10001
-      schema: yelp_transform
+      host: hive-server
+      port: 10000
+      schema: yelp_marts
       connect_timeout: 60

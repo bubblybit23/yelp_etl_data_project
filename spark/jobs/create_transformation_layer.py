@@ -52,7 +52,7 @@ def create_dim_business(spark):
     # Write to table
     dim_business_df.write \
         .mode("overwrite") \
-        .saveAsTable("yelp_transform.dim_business")
+        .saveAsTable("yelp_marts.dim_business")
     
     return dim_business_df
 
@@ -71,10 +71,10 @@ def create_fact_reviews_simple(spark):
         .mode("overwrite") \
         .option("compression", "snappy") \
         .option("parquet.block.size", 128 * 1024 * 1024) \
-        .saveAsTable("yelp_transform.fact_reviews") # 128 mb block
+        .saveAsTable("yelp_marts.fact_reviews") # 128 mb block
     
     # Verify count
-    result_count = spark.sql("SELECT COUNT(*) FROM yelp_transform.fact_reviews").collect()[0][0]
+    result_count = spark.sql("SELECT COUNT(*) FROM yelp_marts.fact_reviews").collect()[0][0]
     print(f"Written {result_count:,} records to fact_reviews")
     
     return fact_reviews_df
@@ -87,17 +87,17 @@ def run_data_quality_checks(spark):
     
     try:
         # Check dim_business
-        dim_count = spark.sql("SELECT COUNT(*) FROM yelp_transform.dim_business").collect()[0][0]
+        dim_count = spark.sql("SELECT COUNT(*) FROM yelp_marts.dim_business").collect()[0][0]
         print(f"✅ dim_business count: {dim_count:,}")
         checks.append(dim_count > 0)
         
         # Check fact_reviews
-        fact_count = spark.sql("SELECT COUNT(*) FROM yelp_transform.fact_reviews").collect()[0][0]
+        fact_count = spark.sql("SELECT COUNT(*) FROM yelp_marts.fact_reviews").collect()[0][0]
         print(f"✅ fact_reviews count: {fact_count:,}")
         checks.append(fact_count > 0)
         
         # Check null business_ids
-        null_biz = spark.sql("SELECT COUNT(*) FROM yelp_transform.dim_business WHERE business_id IS NULL").collect()[0][0]
+        null_biz = spark.sql("SELECT COUNT(*) FROM yelp_marts.dim_business WHERE business_id IS NULL").collect()[0][0]
         print(f"✅ Null business_id count: {null_biz}")
         checks.append(null_biz == 0)
         
@@ -112,8 +112,8 @@ def main():
     spark.sparkContext.setLogLevel("WARN")
     
     try:
-        # Ensure we're using the right database
-        spark.sql("USE yelp_transform")
+        # Create the marts database if it doesn't exist
+        spark.sql("CREATE DATABASE IF NOT EXISTS yelp_marts")
         
         # Create mart tables
         create_dim_business(spark)
@@ -129,7 +129,7 @@ def main():
             print(">>> Sample from dim_business:")
             spark.sql("""
                 SELECT business_id, name, city, state, avg_rating 
-                FROM yelp_transform.dim_business 
+                FROM yelp_marts.dim_business
                 LIMIT 5
             """).show(truncate=False)
             

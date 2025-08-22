@@ -104,6 +104,19 @@ services:
     networks:
       - yelp-platform-net
 
+  dbt:
+    build:
+      context: ../dbt/yelp_transform
+      dockerfile: Dockerfile
+    container_name: dbt
+    volumes:
+      - ../dbt/yelp_transform:/usr/app
+    networks:
+      - yelp-platform-net
+    depends_on:
+      - spark-master
+      - hive-server
+
   spark-master:
     <<: *spark-common
     container_name: spark-master
@@ -133,39 +146,6 @@ services:
       - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
       - SPARK_SSL_ENABLED=no
       - SPARK_HIVE_METASTORE_URIS=thrift://hive-metastore:9083
-
-  spark-staging:
-    <<: *spark-common
-    container_name: spark-staging
-    depends_on:
-      - spark-master
-      - hive-metastore
-    command: >
-      bash -c "
-      echo 'Waiting for services to be ready...'
-      sleep 30
-      /opt/bitnami/spark/bin/spark-submit \
-        --master spark://spark-master:7077 \
-        --conf spark.sql.warehouse.dir=/tmp/spark-warehouse \
-        --conf hive.metastore.uris=thrift://hive-metastore:9083 \
-        /opt/bitnami/spark/jobs/create_staging_layer.py
-      "
-
-  spark-transformation:
-    <<: *spark-common
-    container_name: spark-transformation
-    depends_on:
-      - spark-staging
-    command: >
-      bash -c "
-      echo 'Waiting for staging to complete...'
-      sleep 35
-      /opt/bitnami/spark/bin/spark-submit \
-        --master spark://spark-master:7077 \
-        --conf spark.sql.warehouse.dir=/tmp/spark-warehouse \
-        --conf hive.metastore.uris=thrift://hive-metastore:9083 \
-        /opt/bitnami/spark/jobs/create_transformation_layer.py
-      "
 
   hive-metastore:
     image: apache/hive:3.1.3
